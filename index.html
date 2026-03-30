@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>寶貝斷層 260313 切片瀏覽器</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">離線 DICOM Slice Viewer</div>
+          <h1>寶貝斷層 260313</h1>
+        </div>
+        <div class="topbar-meta">
+          <div id="datasetSummary" class="summary-pill">載入中</div>
+          <div class="hint">方向鍵翻片，滑鼠滾輪可換片</div>
+        </div>
+      </header>
+
+      <main class="layout">
+        <aside class="panel series-panel">
+          <div class="panel-head">
+            <h2>Series</h2>
+            <span>CT 影像序列</span>
+          </div>
+          <div id="seriesList" class="series-list"></div>
+          <div class="panel-foot">
+            <div class="note-title">說明</div>
+            <p>超音波多幀 cine 影像已排除，這個頁面只保留可做切片瀏覽的 CT series。</p>
+          </div>
+        </aside>
+
+        <section class="panel viewer-panel">
+          <div class="viewer-stage" id="viewerStage">
+            <div class="stage-overlay stage-top">
+              <span id="seriesBadge" class="badge">Series</span>
+              <span id="sliceBadge" class="badge badge-soft">0 / 0</span>
+            </div>
+
+            <div class="image-wrap">
+              <img id="sliceImage" alt="CT slice" draggable="false" />
+              <div id="loadingMask" class="loading-mask">載入中</div>
+            </div>
+
+            <div class="stage-overlay stage-bottom">
+              <div id="imageCaption" class="caption">等待載入</div>
+            </div>
+          </div>
+
+          <div class="control-grid">
+            <div class="control-row">
+              <button id="prevBtn" class="button">上一張</button>
+              <button id="nextBtn" class="button">下一張</button>
+              <button id="resetBtn" class="button button-ghost">重置顯示</button>
+            </div>
+
+            <label class="slider-block">
+              <div class="slider-label">
+                <span>Slice</span>
+                <span id="sliceValue">0</span>
+              </div>
+              <input id="sliceSlider" type="range" min="1" max="1" value="1" />
+            </label>
+
+            <label class="slider-block">
+              <div class="slider-label">
+                <span>Brightness</span>
+                <span id="brightnessValue">100%</span>
+              </div>
+              <input id="brightnessSlider" type="range" min="50" max="150" value="100" />
+            </label>
+
+            <label class="slider-block">
+              <div class="slider-label">
+                <span>Contrast</span>
+                <span id="contrastValue">100%</span>
+              </div>
+              <input id="contrastSlider" type="range" min="50" max="180" value="100" />
+            </label>
+          </div>
+        </section>
+
+        <aside class="panel info-panel">
+          <div class="panel-head">
+            <h2>影像資訊</h2>
+            <span id="seriesCountLabel">0 張</span>
+          </div>
+
+          <dl id="metadataList" class="metadata-list"></dl>
+
+          <div class="stats-card">
+            <div class="note-title">鍵盤操作</div>
+            <ul>
+              <li>← / →：上一張 / 下一張</li>
+              <li>PageUp / PageDown：快速移動</li>
+              <li>Home / End：跳到第一張 / 最後一張</li>
+              <li>1 / 2：切換前後 series</li>
+            </ul>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <script src="./data/manifest.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
