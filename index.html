@@ -16,7 +16,7 @@
         </div>
         <div class="topbar-meta">
           <div id="datasetSummary" class="summary-pill">載入中</div>
-          <div class="hint">方向鍵翻片，滑鼠滾輪可換片</div>
+          <div class="hint">方向鍵翻片，A / C / S 切換視角，滑鼠滾輪可換片</div>
         </div>
       </header>
 
@@ -51,6 +51,17 @@
           </div>
 
           <div class="control-grid">
+            <div id="aspectTabs" class="control-row aspect-row" role="group" aria-label="Physical size ratio"></div>
+            <div id="viewTabs" class="control-row view-row" role="tablist" aria-label="Reconstruction planes"></div>
+
+            <label class="slider-block">
+              <div class="slider-label">
+                <span>Zoom</span>
+                <span id="zoomValue">100%</span>
+              </div>
+              <input id="zoomSlider" type="range" min="50" max="300" value="100" />
+            </label>
+
             <div class="control-row">
               <button id="prevBtn" class="button">上一張</button>
               <button id="nextBtn" class="button">下一張</button>
@@ -98,6 +109,7 @@
               <li>PageUp / PageDown：快速移動</li>
               <li>Home / End：跳到第一張 / 最後一張</li>
               <li>1 / 2：切換前後 series</li>
+              <li>A / C / S：切換 axial / coronal / sagittal</li>
             </ul>
           </div>
         </aside>

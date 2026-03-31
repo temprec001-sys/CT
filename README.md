@@ -5,7 +5,7 @@
 ## 結構
 
 - `index.html`, `app.js`, `styles.css` 是前端 viewer
-- `data/` 放切片 PNG 和 `manifest.js`
+- `data/` 放 16-bit 切片 PNG 和 `manifest.js`
 - `build_viewer.py` 只在本機用來從 ISO 重新產生切片
 - `.github/workflows/pages.yml` 會把可發佈檔案丟到 GitHub Pages
 - `push_to_github.ps1` 可以把整個資料夾批次推上 GitHub
@@ -73,6 +73,7 @@ python .\build_viewer.py --source L:\ --out .\data
 ```
 
 注意：`build_viewer.py` 不要放到 GitHub Pages 的 build step，因為 GitHub Actions 上沒有你的本機 `L:\` 掛載。
+這版會輸出 axial / coronal / sagittal 三個視角，檔案量會比上一版大很多。
 
 ## Google Sites
 
@@ -89,4 +90,4 @@ GitHub Pages 上線後，回到 Google Sites：
 
 ## 資料量
 
-目前這份 viewer 約 `1587` 個檔案，總量約 `118 MB`，適合放在 GitHub Pages / Google Sites 的前端嵌入流程。
+目前這份 viewer 約 `6729` 個檔案，總量約 `930 MB`。可以部署到 GitHub Pages，但第一次推送和 Pages 發佈都會比之前久很多。

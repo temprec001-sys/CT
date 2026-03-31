@@ -18,6 +18,11 @@ from pydicom.multival import MultiValue
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_SOURCE = Path("L:\\")
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
+VIEW_LABELS = {
+    "axial": "Axial",
+    "coronal": "Coronal",
+    "sagittal": "Sagittal",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -146,6 +151,159 @@ def series_label(ds: pydicom.dataset.Dataset) -> str:
     if desc and protocol and desc.lower() not in protocol.lower():
         return f"{desc} · {protocol}"
     return desc or protocol or f"Series {normalize_text(ds.get('SeriesNumber')) or '?'}"
+
+
+def estimate_slice_spacing(headers: list[pydicom.dataset.Dataset]) -> float:
+    if len(headers) < 2:
+        first = headers[0] if headers else None
+        if first is None:
+            return 1.0
+        spacing_between = first_number(first.get("SpacingBetweenSlices"))
+        if spacing_between and spacing_between > 0:
+            return spacing_between
+        slice_thickness = first_number(first.get("SliceThickness"))
+        return slice_thickness if slice_thickness and slice_thickness > 0 else 1.0
+
+    first = headers[0]
+    orientation = first.get("ImageOrientationPatient")
+    if orientation is not None:
+        try:
+            orient = np.asarray([safe_float(v) for v in orientation], dtype=np.float64)
+            normal = np.cross(orient[:3], orient[3:6])
+            positions: list[float] = []
+            for header in headers:
+                pos = header.get("ImagePositionPatient")
+                if pos is None:
+                    continue
+                coords = np.asarray([safe_float(v) for v in pos], dtype=np.float64)
+                positions.append(float(np.dot(coords, normal)))
+
+            if len(positions) >= 2:
+                positions.sort()
+                diffs = np.diff(positions)
+                diffs = np.abs(diffs[np.isfinite(diffs) & (np.abs(diffs) > 1e-6)])
+                if diffs.size:
+                    spacing = float(np.median(diffs))
+                    if spacing > 0:
+                        return spacing
+        except Exception:
+            pass
+
+    spacing_between = first_number(first.get("SpacingBetweenSlices"))
+    if spacing_between and spacing_between > 0:
+        return spacing_between
+
+    slice_thickness = first_number(first.get("SliceThickness"))
+    return slice_thickness if slice_thickness and slice_thickness > 0 else 1.0
+
+
+def window_array_to_uint16(
+    arr: np.ndarray,
+    window_center: float | None,
+    window_width: float | None,
+    photometric: str,
+) -> np.ndarray:
+    data = np.asarray(arr, dtype=np.float32)
+
+    if window_center is None or window_width is None or window_width <= 1:
+        lo, hi = np.percentile(data, [0.5, 99.5])
+    else:
+        lo = window_center - (window_width / 2.0)
+        hi = window_center + (window_width / 2.0)
+
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        lo = float(np.min(data))
+        hi = float(np.max(data))
+        if hi <= lo:
+            hi = lo + 1.0
+
+    data = np.clip((data - lo) / (hi - lo), 0.0, 1.0)
+    data = (data * 65535.0).round().astype(np.uint16)
+
+    if photometric.upper() == "MONOCHROME1":
+        data = 65535 - data
+
+    return data
+
+
+def extract_view_slice(volume: np.ndarray, view_key: str, index: int) -> np.ndarray:
+    if view_key == "axial":
+        return volume[index, :, :]
+    if view_key == "coronal":
+        return volume[:, :, index]
+    if view_key == "sagittal":
+        return volume[:, index, :]
+    raise ValueError(f"Unknown view: {view_key}")
+
+
+def view_dimensions(volume: np.ndarray, view_key: str) -> tuple[int, int, int]:
+    depth, height, width = volume.shape
+    if view_key == "axial":
+        return depth, height, width
+    if view_key == "coronal":
+        return width, depth, height
+    if view_key == "sagittal":
+        return height, depth, width
+    raise ValueError(f"Unknown view: {view_key}")
+
+
+def write_view_stack(
+    volume: np.ndarray,
+    out_dir: Path,
+    series_slug: str,
+    view_key: str,
+    window_center: float | None,
+    window_width: float | None,
+    photometric: str,
+    row_spacing: float,
+    col_spacing: float,
+    slice_spacing: float,
+) -> dict[str, Any]:
+    count, rows, cols = view_dimensions(volume, view_key)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    digits = max(4, len(str(count)))
+    slice_files: list[str] = []
+
+    for slice_index in range(count):
+        slice_arr = extract_view_slice(volume, view_key, slice_index)
+        slice_name = f"{slice_index + 1:0{digits}d}.png"
+        out_path = out_dir / slice_name
+        display = window_array_to_uint16(slice_arr, window_center, window_width, photometric)
+        image = Image.fromarray(np.ascontiguousarray(display))
+        image.save(out_path, optimize=False, compress_level=6)
+        slice_files.append(slice_name)
+
+        if slice_index % 50 == 49 or slice_index + 1 == count:
+            print(f"  {VIEW_LABELS[view_key]}: {slice_index + 1}/{count}")
+
+    if view_key == "axial":
+        vertical_spacing = row_spacing
+        horizontal_spacing = col_spacing
+    elif view_key == "coronal":
+        vertical_spacing = slice_spacing
+        horizontal_spacing = row_spacing
+    else:
+        vertical_spacing = slice_spacing
+        horizontal_spacing = col_spacing
+
+    physical_width_mm = cols * horizontal_spacing
+    physical_height_mm = rows * vertical_spacing
+
+    return {
+        "key": view_key,
+        "label": VIEW_LABELS[view_key],
+        "imageDir": f"data/{series_slug}/{view_key}",
+        "slices": slice_files,
+        "imageCount": count,
+        "rows": rows,
+        "columns": cols,
+        "pixelSpacing": [vertical_spacing, horizontal_spacing],
+        "sliceSpacing": slice_spacing,
+        "physicalWidthMm": physical_width_mm,
+        "physicalHeightMm": physical_height_mm,
+        "sampleShape": [rows, cols],
+    }
 
 
 def build_manifest(source_root: Path) -> dict[str, Any]:
@@ -286,7 +444,8 @@ def build_data(source_root: Path, out_root: Path) -> dict[str, Any]:
 
     manifest = build_manifest(source_root)
     series_payload: list[dict[str, Any]] = []
-    total_slices = 0
+    total_axial_slices = 0
+    total_rendered_images = 0
 
     for series_index, item in enumerate(manifest["series"], start=1):
         title_slug = slugify(item["title"])
@@ -298,21 +457,66 @@ def build_data(source_root: Path, out_root: Path) -> dict[str, Any]:
         series_dir = out_root / series_slug
         series_dir.mkdir(parents=True, exist_ok=True)
 
-        digits = max(4, len(str(item["imageCount"])))
-        slice_files: list[str] = []
-        sample_shape = None
+        image_refs = item["imageRefs"]
+        headers = [image_info["header"] for image_info in image_refs]
+        sample_ds = headers[0]
+        rows = safe_int(sample_ds.get("Rows"))
+        cols = safe_int(sample_ds.get("Columns"))
+        row_spacing = safe_float((sample_ds.get("PixelSpacing") or [1.0, 1.0])[0], 1.0)
+        col_spacing = safe_float((sample_ds.get("PixelSpacing") or [1.0, 1.0])[1], 1.0)
+        slice_spacing = estimate_slice_spacing(headers)
+        photometric = normalize_text(sample_ds.get("PhotometricInterpretation")).upper() or "MONOCHROME2"
+        window_center = first_number(sample_ds.get("WindowCenter"))
+        window_width = first_number(sample_ds.get("WindowWidth"))
+        raw_only = all(
+            abs(safe_float(header.get("RescaleSlope"), 1.0) - 1.0) < 1e-6
+            and abs(safe_float(header.get("RescaleIntercept"), 0.0)) < 1e-6
+            for header in headers
+        )
+        pixel_representation = safe_int(sample_ds.get("PixelRepresentation"), 1)
+        volume_dtype = np.float32 if not raw_only else (np.int16 if pixel_representation else np.uint16)
+        volume = np.empty((len(image_refs), rows, cols), dtype=volume_dtype)
 
-        for slice_index, image_info in enumerate(item["imageRefs"], start=1):
+        for slice_index, image_info in enumerate(image_refs, start=1):
             ds = pydicom.dcmread(str(image_info["path"]), force=True)
-            slice_name = f"{slice_index:0{digits}d}.png"
-            out_path = series_dir / slice_name
-            image_meta = write_png_slice(ds, out_path)
-            if sample_shape is None:
-                sample_shape = image_meta["shape"]
-            slice_files.append(slice_name)
-            total_slices += 1
+            arr = ds.pixel_array
+            if arr.ndim > 2:
+                arr = np.squeeze(arr)
+            if arr.shape != (rows, cols):
+                if arr.shape == (cols, rows):
+                    arr = arr.T
+                else:
+                    raise ValueError(
+                        f"Unexpected slice shape {arr.shape} for {image_info['path']} (expected {(rows, cols)})"
+                    )
+            if not raw_only:
+                slope = safe_float(ds.get("RescaleSlope"), 1.0)
+                intercept = safe_float(ds.get("RescaleIntercept"), 0.0)
+                volume[slice_index - 1] = arr.astype(np.float32) * slope + intercept
+            else:
+                volume[slice_index - 1] = arr.astype(volume_dtype, copy=False)
+
             if slice_index % 50 == 0 or slice_index == item["imageCount"]:
-                print(f"[{series_index}/{len(manifest['series'])}] {item['title']}: {slice_index}/{item['imageCount']}")
+                print(f"[{series_index}/{len(manifest['series'])}] {item['title']}: source {slice_index}/{item['imageCount']}")
+
+        views: dict[str, Any] = {}
+        for view_key in VIEW_LABELS:
+            view_dir = series_dir / view_key
+            views[view_key] = write_view_stack(
+                volume=volume,
+                out_dir=view_dir,
+                series_slug=series_slug,
+                view_key=view_key,
+                window_center=window_center,
+                window_width=window_width,
+                photometric=photometric,
+                row_spacing=row_spacing,
+                col_spacing=col_spacing,
+                slice_spacing=slice_spacing,
+            )
+            total_rendered_images += views[view_key]["imageCount"]
+
+        total_axial_slices += len(image_refs)
 
         series_payload.append(
             {
@@ -326,14 +530,13 @@ def build_data(source_root: Path, out_root: Path) -> dict[str, Any]:
                 "rows": item["rows"],
                 "columns": item["columns"],
                 "sliceThickness": item["sliceThickness"],
+                "sliceSpacing": slice_spacing,
                 "pixelSpacing": item["pixelSpacing"],
                 "windowCenter": item["windowCenter"],
                 "windowWidth": item["windowWidth"],
                 "orientation": item["orientation"],
                 "position": item["position"],
-                "imageDir": f"data/{series_slug}",
-                "slices": slice_files,
-                "sampleShape": sample_shape,
+                "views": views,
             }
         )
 
@@ -349,7 +552,9 @@ def build_data(source_root: Path, out_root: Path) -> dict[str, Any]:
         "excludedSeries": manifest["excludedSeries"],
         "summary": {
             "seriesCount": len(series_payload),
-            "sliceCount": total_slices,
+            "axialSliceCount": total_axial_slices,
+            "renderedImageCount": total_rendered_images,
+            "viewCount": len(VIEW_LABELS),
             "excludedCount": len(manifest["excludedSeries"]),
         },
     }
@@ -366,7 +571,12 @@ def main() -> None:
     source_root = Path(args.source).expanduser()
     out_root = Path(args.out).expanduser()
     manifest = build_data(source_root, out_root)
-    print(f"Built {manifest['summary']['seriesCount']} CT series and {manifest['summary']['sliceCount']} slices")
+    print(
+        "Built "
+        f"{manifest['summary']['seriesCount']} CT series, "
+        f"{manifest['summary']['axialSliceCount']} axial slices, "
+        f"{manifest['summary']['renderedImageCount']} rendered images"
+    )
     print(f"Manifest: {out_root / 'manifest.js'}")
 
 
